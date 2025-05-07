@@ -158,7 +158,7 @@ public class Swerve extends SubsystemBase {
     public void setModuleStates(SwerveModuleState[] states) {
         SwerveDriveKinematics.desaturateWheelSpeeds(states, SwerveConstants.MAX_VELOCITY);
         for (int i = 0; i < modules.length; i++) {
-            states[i].optimize(new Rotation2d(modules[i].angle()));
+            // states[i].optimize(new Rotation2d(modules[i].angle()));
             modules[i].set((states[i].speedMetersPerSecond / SwerveConstants.MAX_VELOCITY) * .8,
                     states[i].angle.getRadians());
         }

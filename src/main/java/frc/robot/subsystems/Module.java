@@ -3,10 +3,10 @@ package frc.robot.subsystems;
 import com.revrobotics.spark.SparkBase.ControlType;
 import com.revrobotics.spark.SparkBase.PersistMode;
 import com.revrobotics.spark.SparkBase.ResetMode;
-import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.config.SparkMaxConfig;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.SparkMax;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
 
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.units.measure.AngularVelocity;
@@ -29,24 +29,21 @@ import com.ctre.phoenix6.hardware.TalonFX;
 import com.ctre.phoenix6.sim.TalonFXSimState;
 import com.ctre.phoenix6.signals.InvertedValue;
 import com.ctre.phoenix6.signals.NeutralModeValue;
-import com.reduxrobotics.sensors.canandmag.Canandmag;
-import com.reduxrobotics.sensors.canandmag.CanandmagSettings;
 import com.revrobotics.sim.SparkMaxSim;
 
 public class Module {
     public final TalonFX drive;
     public final SparkMax steer;
-    public final Canandmag encoder;
 
-    public static final double WHEEL_DIAMETER = Units.inchesToMeters(4);
-    public static final double STEER_REDUCTION = (14.0 / 50.0) * (27.0 / 17.0) * (15.0 / 45.0);
+    private final SimEncoder encoderSim;
 
     private final TalonFXSimState driveSim;
     private final SparkMaxSim steerSim;
-    private final CanandmagSim encoderSim;
     private final DCMotorSim driveMotorSim;
     private final DCMotorSim steerMotorSim;
 
+    public static final double WHEEL_DIAMETER = Units.inchesToMeters(4);
+    private static final double STEER_REDUCTION = (14.0 / 50.0) * (27.0 / 17.0) * (15.0 / 45.0);
     private static final double GEAR_RATIO = 8.14;
     private static final double WHEEL_CIRCUMFERENCE = Math.PI * WHEEL_DIAMETER;
     private static final double DRIVE_KV = 0.025;
@@ -65,19 +62,14 @@ public class Module {
 
         drive = new TalonFX(driveID, "rio");
         steer = new SparkMax(steerID, MotorType.kBrushless);
-        encoder = new Canandmag(encoderID);
+
+        encoderSim = new SimEncoder();
 
         driveSim = drive.getSimState();
         steerSim = new SparkMaxSim(steer, driveGearbox);
-        encoderSim = new CanandmagSim();
 
         driveMotorSim = new DCMotorSim(drivePlant, driveGearbox);
         steerMotorSim = new DCMotorSim(steerPlant, steerGearbox);
-
-        CanandmagSettings settings = new CanandmagSettings();
-        settings.setInvertDirection(true);
-        encoder.clearStickyFaults();
-        encoder.setSettings(settings);
 
         SparkMaxConfig steerConfig = new SparkMaxConfig();
         steerConfig
@@ -119,26 +111,31 @@ public class Module {
         driveSim.setSupplyVoltage(12.0);
         driveMotorSim.setInputVoltage(driveSim.getMotorVoltage());
         driveMotorSim.update(0.02);
-    
-        double driveAngularVelRadPerSec = driveMotorSim.getAngularVelocityRadPerSec();
-        double driveAngularPosRad = driveMotorSim.getAngularPositionRad();
-        double driveRotorPosRotations = driveAngularPosRad / (2 * Math.PI) * GEAR_RATIO;
-        double driveRotorVelRps = driveAngularVelRadPerSec / (2 * Math.PI) * GEAR_RATIO;
-        driveSim.setRawRotorPosition(driveRotorPosRotations);
-        driveSim.setRotorVelocity(driveRotorVelRps);
-    
+
+        double driveMotorPosRot = driveMotorSim.getAngularPositionRotations();
+        double driveMotorVelRps = driveMotorSim.getAngularVelocityRPM() / 60.0;
+
+        double driveRotorPosition = driveMotorPosRot * GEAR_RATIO;
+        double driveRotorVelocity = driveMotorVelRps * GEAR_RATIO;
+
+        driveSim.setRawRotorPosition(driveRotorPosition);
+        driveSim.setRotorVelocity(driveRotorVelocity);
+
         steerSim.setBusVoltage(12.0);
-        steerMotorSim.setInputVoltage(steerSim.getAppliedOutput() * steerSim.getBusVoltage());
+        double appliedVoltage = steerSim.getAppliedOutput() * steerSim.getBusVoltage();
+        steerMotorSim.setInputVoltage(appliedVoltage);
         steerMotorSim.update(0.02);
-    
-        double steerAngularPosRad = steerMotorSim.getAngularPositionRad();
-        double steerAngularVelRadPerSec = steerMotorSim.getAngularVelocityRadPerSec();
-        double steerAngleRad = steerAngularPosRad * STEER_REDUCTION;
-        double steerVelRadPerSec = steerAngularVelRadPerSec * STEER_REDUCTION;
-        steerSim.getRelativeEncoderSim().setPosition(steerAngleRad);
-        steerSim.getRelativeEncoderSim().setVelocity(steerVelRadPerSec * 60 / (2 * Math.PI)); // Convert rad/s to RPM
-        encoderSim.setAbsPosition(steerAngleRad / (2 * Math.PI));
-        encoderSim.setVelocity(steerVelRadPerSec / (2 * Math.PI));
+
+        double steerMotorPosRad = steerMotorSim.getAngularPositionRad();
+        double steerMotorVelRadPerSec = steerMotorSim.getAngularVelocityRadPerSec();
+
+        double steerMechanismPosition = steerMotorPosRad * STEER_REDUCTION;
+        double steerMechanismVelocity = steerMotorVelRadPerSec * STEER_REDUCTION;
+
+        steerSim.getRelativeEncoderSim().setPosition(steerMechanismPosition);
+        steerSim.getRelativeEncoderSim().setVelocity(steerMechanismVelocity);
+
+        encoderSim.update(steerMechanismPosition, steerMechanismVelocity);
     }
 
     public void resetDrivePosition() {
@@ -148,10 +145,10 @@ public class Module {
     }
 
     public void syncEncoders() {
-        double angleRad = Util.wrapAngleRad(angle()); // Ensure angle is in [-π, π]
+        double angleRad = Util.wrapAngleRad(angle());
         steer.getEncoder().setPosition(angleRad);
         steerSim.getRelativeEncoderSim().setPosition(angleRad);
-        encoderSim.setAbsPosition(angleRad / (2 * Math.PI));
+        encoderSim.setAbsPosition(angleRad);
     }
 
     public void zeroAbsolute() {
@@ -159,7 +156,6 @@ public class Module {
     }
 
     public void zero() {
-        encoder.setAbsPosition(0, 250);
         encoderSim.setAbsPosition(0);
         steer.getEncoder().setPosition(0);
         steerSim.getRelativeEncoderSim().setPosition(0);
@@ -180,11 +176,11 @@ public class Module {
     }
 
     public double angle() {
-        return (encoderSim.getAbsPosition() * SwerveConstants.PI2) % SwerveConstants.PI2;
+        return (encoderSim.getAbsPosition() % SwerveConstants.PI2 + SwerveConstants.PI2) % SwerveConstants.PI2;
     }
 
     public AngularVelocity steerVelocity() {
-        return RadiansPerSecond.of(encoderSim.getVelocity() * SwerveConstants.PI2);
+        return RadiansPerSecond.of(encoderSim.getVelocity());
     }
 
     public Voltage steerVoltage() {
@@ -202,6 +198,7 @@ public class Module {
         this.desiredAngle = targetAngle;
         drive.set(driveVolts / 12.0);
         steer.getClosedLoopController().setReference(targetAngle, ControlType.kPosition);
+        encoderSim.setAbsPosition(targetAngle);
     }
 
     public void setSteer(double steerVolts) {
@@ -210,24 +207,25 @@ public class Module {
         steer.set(steerVolts / 12.0);
     }
 
-    private static class CanandmagSim {
+    private static class SimEncoder {
         private double absPosition;
         private double velocity;
 
-        public void setAbsPosition(double positionRotations) {
-            this.absPosition = positionRotations;
+        public void setAbsPosition(double positionRadians) {
+            this.absPosition = positionRadians;
         }
 
         public double getAbsPosition() {
             return absPosition;
         }
 
-        public void setVelocity(double velocityRotationsPerSec) {
-            this.velocity = velocityRotationsPerSec;
-        }
-
         public double getVelocity() {
             return velocity;
+        }
+
+        public void update(double pos, double vel) {
+            this.absPosition = pos;
+            this.velocity = vel;
         }
     }
 }
